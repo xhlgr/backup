@@ -9,8 +9,8 @@
 # Description:      Auto backup shell script
 # You must to modify the config before run it!!!
 # Backup MySQL/MariaDB datebases, files and directories
-# Auto transfer backup file to Google Drive (need install rclone command) (option)
-# Auto delete Google Drive's server's remote file (option)
+# Auto transfer backup file to Remote Drive (need install rclone command) (option)
+# Auto delete Remote Drive's server's remote file (option)
 
 [[ $EUID -ne 0 ]] && echo "Error: This script must be run as root!" && exit 1
 
@@ -40,18 +40,18 @@ MYSQL_ROOT_PASSWORD="888"
 
 # Below is a list of MySQL database name that will be backed up
 # If you want backup ALL databases, leave it blank.
-MYSQL_DATABASE_NAME[0]=""
+MYSQL_DATABASE_NAME[0]="wybustop_test"
 
 # Below is a list of files and directories that will be backed up in the tar backup
 # For example:
 # File: /data/www/default/test.tgz
 # Directory: /data/www/default/test
-BACKUP[0]="/var/www/fastuser/data/www/888.wybus.top"
+BACKUP[0]="/var/www/fastuser/data/www/test.wybus.top"
 
 # Number of days to store daily local backups (default 7 days)
 LOCALAGEDAILIES="7"
 
-# Delete remote file from Google/ohter Drive or FTP server flag (true: delete, false: not delete)
+# Delete remote file from Remote Drive or FTP server flag (true: delete, false: not delete)
 DELETE_REMOTE_FILE_FLG=true
 
 # Delete local zip file flag(true: delete, false: not delete)
@@ -61,7 +61,7 @@ DELETE_LOCAL_FILE_FLG=true
 RCLONE_NAME="wybus"
 
 # Rclone remote folder name (default "")
-RCLONE_FOLDER="vpsbackup"
+RCLONE_FOLDER="vpsbackups"
 
 ########## END OF CONFIG ##########
 
@@ -73,7 +73,7 @@ BACKUPDATE=$(date +%Y%m%d%H%M%S)
 # Backup file name
 TARFILE="${LOCALDIR}""$(hostname)"_"${BACKUPDATE}".zip
 # Backup MySQL dump file name
-SQLFILE="${TEMPDIR}mysql_${BACKUPDATE}.sql"
+SQLFILE="${TEMPDIR}mysql_${BACKUPDATE}.sql.gz"
 
 log() {
     echo "$(date "+%Y-%m-%d %H:%M:%S")" "$1"
@@ -129,7 +129,7 @@ EOF
             exit 1
         fi
         if [ "${MYSQL_DATABASE_NAME[0]}" == "" ]; then
-            mysqldump -u root -p"${MYSQL_ROOT_PASSWORD}" --all-databases > "${SQLFILE}" 2>/dev/null
+            mysqldump -u root -p"${MYSQL_ROOT_PASSWORD}" --all-databases | gzip > "${SQLFILE}" 2>/dev/null
             if [ $? -ne 0 ]; then
                 log "MySQL all databases backup failed"
                 exit 1
@@ -140,8 +140,8 @@ EOF
         else
             for db in ${MYSQL_DATABASE_NAME[@]}; do
                 unset DBFILE
-                DBFILE="${TEMPDIR}${db}_${BACKUPDATE}.sql"
-                mysqldump -u root -p"${MYSQL_ROOT_PASSWORD}" ${db} > "${DBFILE}" 2>/dev/null
+                DBFILE="${TEMPDIR}${db}_${BACKUPDATE}.sql.gz"
+                mysqldump -u root -p"${MYSQL_ROOT_PASSWORD}" ${db} | gzip > "${DBFILE}" 2>/dev/null
                 if [ $? -ne 0 ]; then
                     log "MySQL database name [${db}] backup failed, please check database name is correct and try again"
                     exit 1
@@ -162,9 +162,9 @@ start_backup() {
     #tar -zcPf ${TARFILE} ${BACKUP[@]}
     #use 7z to zip
     if ${ENCRYPTFLG}; then
-        7z a -r -p${BACKUPPASS} ${TARFILE} ${BACKUP[@]} >/dev/null 2>&1
+        7z a -r -tzip -p${BACKUPPASS} ${TARFILE} ${BACKUP[@]} >/dev/null 2>&1
     else
-        7z a -r ${TARFILE} ${BACKUP[@]} >/dev/null 2>&1
+        7z a -r -tzip ${TARFILE} ${BACKUP[@]} >/dev/null 2>&1
     fi
     if [ $? -gt 1 ]; then
         log "Zip backup file failed"
@@ -173,7 +173,7 @@ start_backup() {
     log "Zip backup file completed"
 
     # Delete MySQL temporary dump file
-    for sql in $(ls ${TEMPDIR}*.sql); do
+    for sql in $(ls ${TEMPDIR}*.sql.gz); do
         log "Delete MySQL temporary dump file: ${sql}"
         rm -f ${sql}
     done
@@ -182,7 +182,7 @@ start_backup() {
     log "File name: ${OUT_FILE}, File size: $(calculate_size ${OUT_FILE})"
 }
 
-# Transfer backup file to Google Drive
+# Transfer backup file to Remote Drive
 # If you want to install rclone command, please visit website:
 # https://rclone.org/downloads/
 rclone_upload() {
@@ -195,13 +195,13 @@ rclone_upload() {
                 rclone mkdir ${RCLONE_NAME}:${RCLONE_FOLDER}
             fi
         fi
-        log "Tranferring backup file: ${OUT_FILE} to OneDrive"
+        log "Tranferring backup file: ${OUT_FILE} to Remote Drive"
         rclone copy ${OUT_FILE} ${RCLONE_NAME}:${RCLONE_FOLDER} >> ${LOGFILE}
         if [ $? -ne 0 ]; then
-            log "Error: Tranferring backup file: ${OUT_FILE} to OneDrive failed"
+            log "Error: Tranferring backup file: ${OUT_FILE} to Remote Drive failed"
             return 1
         fi
-        log "Tranferring backup file: ${OUT_FILE} to OneDrive completed"
+        log "Tranferring backup file: ${OUT_FILE} to Remote Drive completed"
     fi
 }
 
@@ -222,7 +222,7 @@ get_file_date() {
     return 1
 }
 
-# Delete OneDrive's old backup file
+# Delete Remote Drive's old backup file
 delete_gdrive_file() {
     local FILENAME=$1
     if ${DELETE_REMOTE_FILE_FLG} && ${RCLONE_COMMAND}; then
@@ -230,12 +230,12 @@ delete_gdrive_file() {
         if [ $? -eq 0 ]; then
             rclone delete ${RCLONE_NAME}:${RCLONE_FOLDER}/${FILENAME} >> ${LOGFILE}
             if [ $? -eq 0 ]; then
-                log "OneDrive's old backup file: ${FILENAME} has been deleted"
+                log "Remote Drive's old backup file: ${FILENAME} has been deleted"
             else
-                log "Failed to delete OneDrive's old backup file: ${FILENAME}"
+                log "Failed to delete Remote Drive's old backup file: ${FILENAME}"
             fi
         else
-            log "OneDrive's old backup file: ${FILENAME} is not exist"
+            log "Remote Drive's old backup file: ${FILENAME} is not exist"
         fi
     fi
 }
